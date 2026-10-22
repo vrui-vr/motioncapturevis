@@ -18,6 +18,8 @@ Copyright (c) 2026 Oliver Kreylos
 #include <Geometry/Box.h>
 #include <Geometry/AffineCombiner.h>
 #include <Geometry/LinearUnit.h>
+#include <Geometry/PointPicker.h>
+#include <Geometry/RayPicker.h>
 #include <GLMotif/WidgetManager.h>
 #include <GLMotif/StyleSheet.h>
 #include <GLMotif/PopupWindow.h>
@@ -36,9 +38,7 @@ Copyright (c) 2026 Oliver Kreylos
 #include <Vrui/Application.h>
 #include <Vrui/CoordinateManager.h>
 #include <Vrui/SceneGraphManager.h>
-
-// DEBUGGING
-#include <iostream>
+#include <Vrui/InputDevice.h>
 
 class MotionCaptureViewer:public Vrui::Application
 	{
@@ -90,6 +90,7 @@ class MotionCaptureViewer:public Vrui::Application
 	SceneGraph::GroupNodePointer markerGroup; // Group node containing the individual marker visualizations
 	SceneGraph::ShapeNodePointer* markers; // Array of visualizations for the motion capture take's individual markers
 	bool* markerValids; // Array of flags if the motion capture take's individual markers are currently visible
+	bool* markerLabeleds; // Array of flags if any motion capture markers are labeled
 	GLMotif::PopupWindow* playbackDialogPopup; // The playback control dialog
 	GLMotif::TextFieldSlider* timeSlider; // Slider to select the current playback time
 	GLMotif::ToggleButton* playToggle; // Toggle button to enable/disable automatic playback
@@ -112,6 +113,7 @@ class MotionCaptureViewer:public Vrui::Application
 	/* Methods from class Vrui::Application: */
 	virtual void frame(void);
 	virtual void resetNavigation(void);
+	virtual void eventCallback(EventID eventId,InputDevice::ButtonCallbackData* cbData);
 	};
 
 /************************************
@@ -364,6 +366,7 @@ void MotionCaptureViewer::readTraceFile(const char* fileName)
 	
 	markers=new SceneGraph::ShapeNodePointer[numMarkers];
 	markerValids=new bool[numMarkers];
+	markerLabeleds=new bool[numMarkers];
 	for(size_t i=0;i<numMarkers;++i)
 		{
 		SceneGraph::AppearanceNodePointer appearance=SceneGraph::createDiffuseAppearance(SceneGraph::Color(0.667f,0.667f,0.667f));
@@ -380,6 +383,7 @@ void MotionCaptureViewer::readTraceFile(const char* fileName)
 		markers[i]->update();
 		
 		markerValids[i]=false;
+		markerLabeleds[i]=false;
 		}
 	}
 
@@ -561,6 +565,9 @@ MotionCaptureViewer::MotionCaptureViewer(int& argc,char**& argv)
 	
 	/* Set Vrui's navigational-space unit: */
 	Vrui::getCoordinateManager()->setUnit(positionUnit);
+	
+	/* Create an annotation tool: */
+	addEventTool("Show Marker Label",0,0);
 	}
 
 MotionCaptureViewer::~MotionCaptureViewer(void)
@@ -568,6 +575,7 @@ MotionCaptureViewer::~MotionCaptureViewer(void)
 	/* Delete the marker visualizations: */
 	delete[] markers;
 	delete[] markerValids;
+	delete[] markerLabeleds;
 	
 	/* Delete the GUI: */
 	delete playbackDialogPopup;
@@ -623,6 +631,65 @@ void MotionCaptureViewer::resetNavigation(void)
 	
 	/* Center the display on the marker positions' bounding box: */
 	Vrui::setNavigationTransformation(bbox,Vrui::Vector(0,0,1),Vrui::Vector(0,1,0));
+	}
+
+void MotionCaptureViewer::eventCallback(Vrui::Application::EventID eventId,Vrui::InputDevice::ButtonCallbackData* cbData)
+	{
+	if(cbData->newButtonState)
+		{
+		switch(eventId)
+			{
+			case 0:
+				{
+				size_t markerIndex=~size_t(0);
+				
+				/* Pick a motion capture marker based on its current position: */
+				if(cbData->device->isRayDevice())
+					{
+					/* Pick against the device's ray in navigational coordinates: */
+					Vrui::Ray deviceRay=cbData->device->getRay();
+					deviceRay.transform(Vrui::getInverseNavigationTransformation());
+					Geometry::RayPicker<Vrui::Scalar,3> picker(deviceRay,Vrui::getRayPickCosine());
+					for(size_t i=0;i<markerTraces.size();++i)
+						if(markerValids[i])
+							picker(SceneGraph::SphereNodePointer(markers[i]->geometry.getValue())->center.getValue());
+					
+					if(picker.havePickedPoint())
+						markerIndex=picker.getPickIndex();
+					}
+				else
+					{
+					/* Pick against the device's position in navigational coordinates: */
+					Vrui::Point devicePos=Vrui::getInverseNavigationTransformation().transform(cbData->device->getPosition());
+					Vrui::Scalar pickDist=Vrui::getInverseNavigationTransformation().getScaling()*Vrui::getPointPickDistance();
+					Geometry::PointPicker<Vrui::Scalar,3> picker(devicePos,pickDist);
+					for(size_t i=0;i<markerTraces.size();++i)
+						if(markerValids[i])
+							picker(SceneGraph::SphereNodePointer(markers[i]->geometry.getValue())->center.getValue());
+					
+					if(picker.havePickedPoint())
+						markerIndex=picker.getPickIndex();
+					}
+				
+				if(markerIndex<markerTraces.size())
+					{
+					/* Toggle the selected marker's label: */
+					if(markerLabeleds[markerIndex])
+						{
+						/* Mark the marker as unlabeled: */
+						markerLabeleds[markerIndex]=false;
+						}
+					else
+						{
+						/* Mark the marker as labeled: */
+						markerLabeleds[markerIndex]=true;
+						}
+					}
+				
+				break;
+				}
+			}
+		}
 	}
 
 /****************
