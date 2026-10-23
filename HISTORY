@@ -3,3 +3,6 @@ Motion Capture Visualization Change History
 
 Motion Capture Visualization 1.0:
 - Beginning of history file.
+- Added marker labels using scene graph bubbles.
+  - Problem: Since the motion capture hardware can't identify individual
+    markers, the labels are more than useless.

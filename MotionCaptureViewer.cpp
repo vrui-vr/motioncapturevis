@@ -28,11 +28,16 @@ Copyright (c) 2026 Oliver Kreylos
 #include <GLMotif/TextFieldSlider.h>
 #include <SceneGraph/GroupNode.h>
 #include <SceneGraph/ONTransformNode.h>
+#include <SceneGraph/OGTransformNode.h>
+#include <SceneGraph/BillboardNode.h>
 #include <SceneGraph/AppearanceNode.h>
 #include <SceneGraph/SphereNode.h>
 #include <SceneGraph/ColorNode.h>
 #include <SceneGraph/CoordinateNode.h>
 #include <SceneGraph/IndexedLineSetNode.h>
+#include <SceneGraph/FancyFontStyleNode.h>
+#include <SceneGraph/FancyTextNode.h>
+#include <SceneGraph/BubbleNode.h>
 #include <SceneGraph/ShapeNode.h>
 #include <Vrui/Vrui.h>
 #include <Vrui/Application.h>
@@ -88,9 +93,12 @@ class MotionCaptureViewer:public Vrui::Application
 	SceneGraph::ONTransformNodePointer root; // Root of the static and individual marker visualization
 	SceneGraph::ShapeNodePointer staticVisualization; // Static visualization of the motion capture take
 	SceneGraph::GroupNodePointer markerGroup; // Group node containing the individual marker visualizations
-	SceneGraph::ShapeNodePointer* markers; // Array of visualizations for the motion capture take's individual markers
+	SceneGraph::OGTransformNodePointer* markerRoots; // Array of root node for each marker visualization
+	SceneGraph::SphereNodePointer markerSphere; // Shared sphere node for marker visualization
 	bool* markerValids; // Array of flags if the motion capture take's individual markers are currently visible
-	bool* markerLabeleds; // Array of flags if any motion capture markers are labeled
+	SceneGraph::FancyFontStyleNodePointer labelFontStyle; // Font style for marker labels
+	SceneGraph::BillboardNodePointer* markerLabelRoots; // Array of root nodes for each marker label
+	bool* markerLabeleds; // Array of flags if any motion capture markers are currently labeled
 	GLMotif::PopupWindow* playbackDialogPopup; // The playback control dialog
 	GLMotif::TextFieldSlider* timeSlider; // Slider to select the current playback time
 	GLMotif::ToggleButton* playToggle; // Toggle button to enable/disable automatic playback
@@ -104,6 +112,7 @@ class MotionCaptureViewer:public Vrui::Application
 	void updateMarkerVisualization(double visualizationTime); // Updates the marker visualization to the given time point
 	void timeSliderCallback(GLMotif::TextFieldSlider::ValueChangedCallbackData* cbData);
 	void playToggleCallback(GLMotif::ToggleButton::ValueChangedCallbackData* cbData);
+	void navigationTransformationChangedCallback(Vrui::NavigationTransformationChangedCallbackData* cbData);
 	
 	/* Constructors and destructors: */
 	public:
@@ -113,7 +122,7 @@ class MotionCaptureViewer:public Vrui::Application
 	/* Methods from class Vrui::Application: */
 	virtual void frame(void);
 	virtual void resetNavigation(void);
-	virtual void eventCallback(EventID eventId,InputDevice::ButtonCallbackData* cbData);
+	virtual void eventCallback(EventID eventId,Vrui::InputDevice::ButtonCallbackData* cbData);
 	};
 
 /************************************
@@ -364,27 +373,31 @@ void MotionCaptureViewer::readTraceFile(const char* fileName)
 	markerGroup=new SceneGraph::GroupNode;
 	root->addChild(*markerGroup);
 	
-	markers=new SceneGraph::ShapeNodePointer[numMarkers];
+	markerRoots=new SceneGraph::OGTransformNodePointer[numMarkers];
 	markerValids=new bool[numMarkers];
 	markerLabeleds=new bool[numMarkers];
+	
+	markerSphere=new SceneGraph::SphereNode;
+	markerSphere->radius.setValue(Vrui::getUiSize());
+	markerSphere->useImpostor.setValue(true);
+	markerSphere->ccw.setValue(true);
+	markerSphere->update();
+	
+	SceneGraph::ShapeNodePointer markerShape=new SceneGraph::ShapeNode;
+	markerShape->appearance.setValue(SceneGraph::createDiffuseAppearance(SceneGraph::Color(0.667f,0.667f,0.667f)));
+	markerShape->geometry.setValue(markerSphere);
+	markerShape->update();
+	
 	for(size_t i=0;i<numMarkers;++i)
 		{
-		SceneGraph::AppearanceNodePointer appearance=SceneGraph::createDiffuseAppearance(SceneGraph::Color(0.667f,0.667f,0.667f));
-		
-		SceneGraph::SphereNodePointer sphere=new SceneGraph::SphereNode;
-		sphere->radius.setValue(SceneGraph::Scalar(positionUnit.getMeterFactor()*0.01));
-		sphere->useImpostor.setValue(true);
-		sphere->ccw.setValue(true);
-		sphere->update();
-		
-		markers[i]=new SceneGraph::ShapeNode;
-		markers[i]->appearance.setValue(appearance);
-		markers[i]->geometry.setValue(sphere);
-		markers[i]->update();
+		markerRoots[i]=new SceneGraph::OGTransformNode;
+		markerRoots[i]->addChild(*markerShape);
 		
 		markerValids[i]=false;
 		markerLabeleds[i]=false;
 		}
+	
+	markerLabelRoots=new SceneGraph::BillboardNodePointer[numMarkers];
 	}
 
 void MotionCaptureViewer::updateMarkerVisualization(double visualizationTime)
@@ -416,14 +429,12 @@ void MotionCaptureViewer::updateMarkerVisualization(double visualizationTime)
 			if(valid)
 				{
 				/* Interpolate the marker position based on the surrounding valid positions: */
-				SceneGraph::SphereNodePointer sphere(markers[i]->geometry.getValue());
 				Point markerPos=Geometry::affineCombination(trace[frameIndex].position,trace[frameIndex+1].position,interpolator);
 				centroidC.addPoint(markerPos);
-				sphere->center.setValue(SceneGraph::Point(markerPos));
-				sphere->update();
+				markerRoots[i]->setTransform(SceneGraph::OGTransform(markerPos-Point::origin,SceneGraph::Rotation::identity,Vrui::getInverseNavigationTransformation().getScaling()));
 				
 				if(!markerValids[i])
-					markerGroup->addChild(*markers[i]);
+					markerGroup->addChild(*markerRoots[i]);
 				}
 			else
 				{
@@ -453,7 +464,7 @@ void MotionCaptureViewer::updateMarkerVisualization(double visualizationTime)
 					}
 				
 				if(markerValids[i])
-					markerGroup->removeChild(*markers[i]);
+					markerGroup->removeChild(*markerRoots[i]);
 				}
 			markerValids[i]=valid;
 			}
@@ -499,10 +510,20 @@ void MotionCaptureViewer::playToggleCallback(GLMotif::ToggleButton::ValueChanged
 		playback=false;
 	}
 
+void MotionCaptureViewer::navigationTransformationChangedCallback(Vrui::NavigationTransformationChangedCallbackData* cbData)
+	{
+	/* Set the scaling factors of all marker visualizations: */
+	for(size_t i=0;i<markerTraces.size();++i)
+		{
+		const SceneGraph::OGTransform& t=markerRoots[i]->transform.getValue();
+		markerRoots[i]->transform.setValue(SceneGraph::OGTransform(t.getTranslation(),t.getRotation(),cbData->newInverseTransform.getScaling()));
+		}
+	}
+
 MotionCaptureViewer::MotionCaptureViewer(int& argc,char**& argv)
 	:Vrui::Application(argc,argv),
 	 frameRate(0),totalNumFrames(0),
-	 markers(0),markerValids(0),
+	 markerRoots(0),markerValids(0),markerLabelRoots(0),markerLabeleds(0),
 	 playbackDialogPopup(0),
 	 playback(false),playbackLooping(false),playbackTime(0),playbackFactor(1.0)
 	{
@@ -563,8 +584,21 @@ MotionCaptureViewer::MotionCaptureViewer(int& argc,char**& argv)
 	
 	Vrui::popupPrimaryWidget(playbackDialogPopup);
 	
+	/* Create a font style for marker labels: */
+	labelFontStyle=new SceneGraph::FancyFontStyleNode;
+	labelFontStyle->family.setValue("SANS");
+	labelFontStyle->style.setValue("PLAIN");
+	labelFontStyle->size.setValue(Vrui::getUiStyleSheet()->fontHeight);
+	labelFontStyle->spacing.setValue(1);
+	labelFontStyle->justify.appendValue("BEGIN");
+	labelFontStyle->precision.setValue(1);
+	labelFontStyle->update();
+	
 	/* Set Vrui's navigational-space unit: */
 	Vrui::getCoordinateManager()->setUnit(positionUnit);
+	
+	/* Register a callback to update the size of the marker visualization when the navigation transformation changes: */
+	Vrui::getNavigationTransformationChangedCallbacks().add(this,&MotionCaptureViewer::navigationTransformationChangedCallback);
 	
 	/* Create an annotation tool: */
 	addEventTool("Show Marker Label",0,0);
@@ -572,9 +606,13 @@ MotionCaptureViewer::MotionCaptureViewer(int& argc,char**& argv)
 
 MotionCaptureViewer::~MotionCaptureViewer(void)
 	{
+	/* Unregister the navigation transformation changed callback: */
+	Vrui::getNavigationTransformationChangedCallbacks().remove(this,&MotionCaptureViewer::navigationTransformationChangedCallback);
+	
 	/* Delete the marker visualizations: */
-	delete[] markers;
+	delete[] markerRoots;
 	delete[] markerValids;
+	delete[] markerLabelRoots;
 	delete[] markerLabeleds;
 	
 	/* Delete the GUI: */
@@ -644,31 +682,25 @@ void MotionCaptureViewer::eventCallback(Vrui::Application::EventID eventId,Vrui:
 				size_t markerIndex=~size_t(0);
 				
 				/* Pick a motion capture marker based on its current position: */
-				if(cbData->device->isRayDevice())
+				if(cbData->inputDevice->isRayDevice())
 					{
 					/* Pick against the device's ray in navigational coordinates: */
-					Vrui::Ray deviceRay=cbData->device->getRay();
+					Vrui::Ray deviceRay=cbData->inputDevice->getRay();
 					deviceRay.transform(Vrui::getInverseNavigationTransformation());
 					Geometry::RayPicker<Vrui::Scalar,3> picker(deviceRay,Vrui::getRayPickCosine());
 					for(size_t i=0;i<markerTraces.size();++i)
-						if(markerValids[i])
-							picker(SceneGraph::SphereNodePointer(markers[i]->geometry.getValue())->center.getValue());
-					
-					if(picker.havePickedPoint())
-						markerIndex=picker.getPickIndex();
+						if(markerValids[i]&&picker(root->transform.getValue().transform(markerRoots[i]->transform.getValue().getOrigin())))
+							markerIndex=i;
 					}
 				else
 					{
 					/* Pick against the device's position in navigational coordinates: */
-					Vrui::Point devicePos=Vrui::getInverseNavigationTransformation().transform(cbData->device->getPosition());
+					Vrui::Point devicePos=Vrui::getInverseNavigationTransformation().transform(cbData->inputDevice->getPosition());
 					Vrui::Scalar pickDist=Vrui::getInverseNavigationTransformation().getScaling()*Vrui::getPointPickDistance();
 					Geometry::PointPicker<Vrui::Scalar,3> picker(devicePos,pickDist);
 					for(size_t i=0;i<markerTraces.size();++i)
-						if(markerValids[i])
-							picker(SceneGraph::SphereNodePointer(markers[i]->geometry.getValue())->center.getValue());
-					
-					if(picker.havePickedPoint())
-						markerIndex=picker.getPickIndex();
+						if(markerValids[i]&&picker(root->transform.getValue().transform(markerRoots[i]->transform.getValue().getOrigin())))
+							markerIndex=i;
 					}
 				
 				if(markerIndex<markerTraces.size())
@@ -676,12 +708,61 @@ void MotionCaptureViewer::eventCallback(Vrui::Application::EventID eventId,Vrui:
 					/* Toggle the selected marker's label: */
 					if(markerLabeleds[markerIndex])
 						{
-						/* Mark the marker as unlabeled: */
+						/* Remove the marker label from the marker visualization's scene graph: */
+						markerRoots[markerIndex]->removeChild(*markerLabelRoots[markerIndex]);
 						markerLabeleds[markerIndex]=false;
 						}
 					else
 						{
-						/* Mark the marker as labeled: */
+						if(markerLabelRoots[markerIndex]==0)
+							{
+							SceneGraph::FancyTextNodePointer labelText=new SceneGraph::FancyTextNode;
+							labelText->string.setValue(markerTraces[markerIndex].name);
+							labelText->fontStyle.setValue(labelFontStyle);
+							labelText->depth.setValue(labelFontStyle->size.getValue()*SceneGraph::Scalar(0.025));
+							labelText->front.setValue(true);
+							labelText->outline.setValue(true);
+							labelText->back.setValue(false);
+							labelText->update();
+							
+							SceneGraph::ShapeNodePointer labelShape=new SceneGraph::ShapeNode;
+							labelShape->appearance.setValue(SceneGraph::createDiffuseAppearance(SceneGraph::Color(0.0f,0.0f,0.0f)));
+							labelShape->geometry.setValue(labelText);
+							labelShape->update();
+							
+							SceneGraph::Scalar s(Vrui::getUiSize());
+							
+							SceneGraph::Box labelBox=labelShape->calcBoundingBox();
+							SceneGraph::BubbleNodePointer labelBubble=new SceneGraph::BubbleNode;
+							labelBubble->origin.setValue(labelBox.getVertex(0));
+							labelBubble->width.setValue(labelBox.getSize(0));
+							labelBubble->height.setValue(labelBox.getSize(1));
+							labelBubble->marginWidth.setValue(s);
+							labelBubble->borderDepth.setValue(SceneGraph::Scalar(0.25)*s);
+							labelBubble->borderWidth.setValue(s);
+							labelBubble->backsideDepth.setValue(SceneGraph::Scalar(0.5)*s);
+							labelBubble->pointHeight.setValue(SceneGraph::Scalar(3)*s);
+							labelBubble->pointAlignment.setValue("LEFTIN");
+							labelBubble->update();
+							
+							SceneGraph::ShapeNodePointer labelBubbleShape=new SceneGraph::ShapeNode;
+							labelBubbleShape->appearance.setValue(SceneGraph::createPhongAppearance(SceneGraph::Color(0.0f,0.0f,0.0f),SceneGraph::Color(0.5f,0.5f,0.5f),0.8f));
+							labelBubbleShape->geometry.setValue(labelBubble);
+							labelBubbleShape->update();
+							
+							SceneGraph::ONTransformNodePointer bubbleTransform=new SceneGraph::ONTransformNode;
+							bubbleTransform->setTransform(SceneGraph::ONTransform::translateToOriginFrom(labelBubble->calcBubblePoint()+SceneGraph::Vector(SceneGraph::Scalar(1)*s,-SceneGraph::Scalar(1)*s,0)));
+							bubbleTransform->addChild(*labelShape);
+							bubbleTransform->addChild(*labelBubbleShape);
+							
+							markerLabelRoots[markerIndex]=new SceneGraph::BillboardNode;
+							markerLabelRoots[markerIndex]->axisOfRotation.setValue(SceneGraph::Vector::zero);
+							markerLabelRoots[markerIndex]->addChild(*bubbleTransform);
+							markerLabelRoots[markerIndex]->update();
+							}
+						
+						/* Add the marker label to the marker visualization's scene graph: */
+						markerRoots[markerIndex]->addChild(*markerLabelRoots[markerIndex]);
 						markerLabeleds[markerIndex]=true;
 						}
 					}
