@@ -20,6 +20,7 @@ Copyright (c) 2026 Oliver Kreylos
 #include <Geometry/LinearUnit.h>
 #include <Geometry/PointPicker.h>
 #include <Geometry/RayPicker.h>
+#include <GL/GLMaterial.h>
 #include <GLMotif/WidgetManager.h>
 #include <GLMotif/StyleSheet.h>
 #include <GLMotif/PopupWindow.h>
@@ -586,8 +587,8 @@ MotionCaptureViewer::MotionCaptureViewer(int& argc,char**& argv)
 	
 	/* Create a font style for marker labels: */
 	labelFontStyle=new SceneGraph::FancyFontStyleNode;
-	labelFontStyle->family.setValue("SANS");
-	labelFontStyle->style.setValue("PLAIN");
+	labelFontStyle->family.setValue("SERIF");
+	labelFontStyle->style.setValue("BOLD");
 	labelFontStyle->size.setValue(Vrui::getUiStyleSheet()->fontHeight);
 	labelFontStyle->spacing.setValue(1);
 	labelFontStyle->justify.appendValue("BEGIN");
@@ -716,21 +717,23 @@ void MotionCaptureViewer::eventCallback(Vrui::Application::EventID eventId,Vrui:
 						{
 						if(markerLabelRoots[markerIndex]==0)
 							{
+							const GLMotif::StyleSheet& ss=*Vrui::getUiStyleSheet();
+							
 							SceneGraph::FancyTextNodePointer labelText=new SceneGraph::FancyTextNode;
 							labelText->string.setValue(markerTraces[markerIndex].name);
 							labelText->fontStyle.setValue(labelFontStyle);
-							labelText->depth.setValue(labelFontStyle->size.getValue()*SceneGraph::Scalar(0.025));
+							labelText->depth.setValue(ss.fontHeight*SceneGraph::Scalar(0.025));
 							labelText->front.setValue(true);
 							labelText->outline.setValue(true);
 							labelText->back.setValue(false);
 							labelText->update();
 							
 							SceneGraph::ShapeNodePointer labelShape=new SceneGraph::ShapeNode;
-							labelShape->appearance.setValue(SceneGraph::createDiffuseAppearance(SceneGraph::Color(0.0f,0.0f,0.0f)));
+							labelShape->appearance.setValue(SceneGraph::createDiffuseAppearance(SceneGraph::Color(ss.fgColor)));
 							labelShape->geometry.setValue(labelText);
 							labelShape->update();
 							
-							SceneGraph::Scalar s(Vrui::getUiSize());
+							SceneGraph::Scalar s(ss.size);
 							
 							SceneGraph::Box labelBox=labelShape->calcBoundingBox();
 							SceneGraph::BubbleNodePointer labelBubble=new SceneGraph::BubbleNode;
@@ -738,15 +741,18 @@ void MotionCaptureViewer::eventCallback(Vrui::Application::EventID eventId,Vrui:
 							labelBubble->width.setValue(labelBox.getSize(0));
 							labelBubble->height.setValue(labelBox.getSize(1));
 							labelBubble->marginWidth.setValue(s);
+							labelBubble->interiorColor.setValue(SceneGraph::Color(ss.bgColor));
 							labelBubble->borderDepth.setValue(SceneGraph::Scalar(0.25)*s);
 							labelBubble->borderWidth.setValue(s);
 							labelBubble->backsideDepth.setValue(SceneGraph::Scalar(0.5)*s);
 							labelBubble->pointHeight.setValue(SceneGraph::Scalar(3)*s);
 							labelBubble->pointAlignment.setValue("LEFTIN");
+							labelBubble->borderColor.setValue(SceneGraph::Color(ss.titlebarBgColor));
 							labelBubble->update();
 							
 							SceneGraph::ShapeNodePointer labelBubbleShape=new SceneGraph::ShapeNode;
-							labelBubbleShape->appearance.setValue(SceneGraph::createPhongAppearance(SceneGraph::Color(0.0f,0.0f,0.0f),SceneGraph::Color(0.5f,0.5f,0.5f),0.8f));
+							const GLMaterial& material=Vrui::getWidgetMaterial();
+							labelBubbleShape->appearance.setValue(SceneGraph::createPhongAppearance(SceneGraph::Color(material.diffuse),SceneGraph::Color(material.specular),material.shininess/SceneGraph::Scalar(128)));
 							labelBubbleShape->geometry.setValue(labelBubble);
 							labelBubbleShape->update();
 							
